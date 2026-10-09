@@ -2,3 +2,7 @@ paths:
   .github/workflows/*.{yml,yaml}:
     ignore:
       - 'unknown permission scope "copilot-requests"'
+  .github/workflows/announcements.yml:
+    ignore:
+      # GitHub supports self-repository references; actionlint 1.7.12 does not yet.
+      - 'specifying action "\$/\.github/scripts/announcements" in invalid format because ref is missing'

@@ -1,0 +1,41 @@
+name: Deliver announcements
+description: Execute announcement code from the reusable workflow's exact commit
+
+inputs:
+  announcement:
+    description: JSON object containing title, text, url, and optional channel overrides
+    required: true
+  channels:
+    description: JSON array of selected delivery channels
+    required: true
+  targets:
+    description: JSON object mapping channels to destination arrays
+    required: true
+  mode:
+    description: dry-run, draft, or publish
+    default: dry-run
+  groupsio-host:
+    description: Groups.io API host (lists.cncf.io or groups.io)
+    default: lists.cncf.io
+  reddit-user-agent:
+    description: Descriptive Reddit API user agent including the bot username
+    default: ""
+  report-directory:
+    description: Absolute directory for the JSON delivery report
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate and deliver
+      shell: bash
+      env:
+        CODE_PATH: ${{ github.action_path }}
+        ANNOUNCEMENT: ${{ inputs.announcement }}
+        ANNOUNCEMENT_CHANNELS: ${{ inputs.channels }}
+        ANNOUNCEMENT_TARGETS: ${{ inputs.targets }}
+        ANNOUNCEMENT_MODE: ${{ inputs.mode }}
+        GROUPSIO_HOST: ${{ inputs.groupsio-host }}
+        REDDIT_USER_AGENT: ${{ inputs.reddit-user-agent }}
+        ANNOUNCEMENT_REPORT_DIR: ${{ inputs.report-directory }}
+      run: python3 "$CODE_PATH/publish.py"
