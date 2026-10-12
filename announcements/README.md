@@ -69,6 +69,20 @@ Do not call this workflow from untrusted PR code or `pull_request_target` jobs
 that check out a PR head. Only announce reviewed content from a trusted branch,
 and restrict which workflows/repositories can access the publishing credentials.
 
+### Visibility
+
+Only the credentials are confidential. In a public calling repository, anyone
+can read the run's logs, job summary, and report artifact. The logs show the
+step inputs, including the announcement content, selected channels, and
+targets. The report adds delivery status and remote IDs. Destination and
+remote IDs cannot be used without the corresponding credentials.
+
+**Do not use this workflow for embargoed or confidential content**, such as a
+security advisory prepared ahead of its release, from a public repository.
+Removing the report would not help, because the content is already in the
+logs. Run from a private repository if content must stay private until
+publication.
+
 ### Inputs
 
 | Input | Required / default | Meaning |
@@ -298,11 +312,12 @@ and explicitly publish Slack/Reddit separately with only those services selected
 ## Results, failures, and retries
 
 Every invocation uploads a `report.json` artifact (14-day retention) and writes
-status counts to the job summary. The report includes rendered content, targets,
-planned actions, `preview`/`drafted`/`submitted`/`failed`/`pending` status, and any
-returned remote IDs. Reports contain announcement content, so use only content
-appropriate for the caller repository's artifact visibility. Credentials and
-raw API responses are not included.
+status counts and the rendered content for each selected service to the job
+summary. The report is an audit record of each
+destination: channel, target, planned action,
+`preview`/`drafted`/`submitted`/`failed`/`pending` status, any returned remote
+IDs, and a sanitized error. Rendered content, credentials, and raw API responses
+are not included. See [Visibility](#visibility) for what a public run exposes.
 
 All content, destinations, and required secrets are validated before requests.
 For non-preview Buffer destinations, channel/service identity and availability

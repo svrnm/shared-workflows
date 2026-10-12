@@ -351,7 +351,11 @@ class MainTests(unittest.TestCase):
             report = json.loads((Path(directory) / "report.json").read_text())
             self.assertTrue(report["success"])
             self.assertEqual(len(report["deliveries"]), 8)
+            for item in report["deliveries"]:
+                self.assertLessEqual(set(item), set(publish.REPORT_FIELDS))
+            self.assertNotIn(ANNOUNCEMENT["text"], json.dumps(report))
             self.assertIn("preview: 8", summary.read_text())
+            self.assertIn(ANNOUNCEMENT["text"], summary.read_text())
         request.assert_not_called()
 
     @patch("publish.request")

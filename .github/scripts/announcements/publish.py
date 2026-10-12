@@ -17,6 +17,7 @@ CHANNELS = {"linkedin", "bluesky", "mastodon", "slack", "groupsio", "reddit"}
 BUFFER_CHANNELS = {"linkedin", "bluesky", "mastodon"}
 DRAFT_CHANNELS = BUFFER_CHANNELS | {"groupsio"}
 MODES = {"dry-run", "draft", "publish"}
+REPORT_FIELDS = ("channel", "target", "action", "status", "remote_id", "remote_status", "error")
 SECRETS = {
     "linkedin": ("BUFFER_API_KEY",),
     "bluesky": ("BUFFER_API_KEY",),
@@ -362,8 +363,13 @@ def main():
     success = False
 
     def save_report():
+        # The report is an audit record; rendered content is reproducible from the inputs.
+        saved = {**report, "deliveries": [
+            {key: value for key, value in item.items() if key in REPORT_FIELDS}
+            for item in report["deliveries"]
+        ]}
         temporary = output / "report.json.tmp"
-        temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        temporary.write_text(json.dumps(saved, indent=2) + "\n", encoding="utf-8")
         temporary.replace(output / "report.json")
 
     try:
@@ -389,7 +395,18 @@ def main():
         summary.append(f"- {status}: {count}")
     if "error" in report:
         summary.extend(["", report["error"]])
-    summary.extend(["", "See the announcement report artifact for content, destinations, and delivery IDs."])
+    rendered = {}
+    for item in report["deliveries"]:
+        rendered.setdefault(item["channel"], item)
+    if rendered:
+        summary.extend(["", "### Rendered content", ""])
+    for channel, item in rendered.items():
+        content = item["text"] if channel != "reddit" else item["url"]
+        summary.append(
+            f"<details><summary>{channel}: {html.escape(item['title'])}</summary>"
+            f"<pre>{html.escape(content)}</pre></details>"
+        )
+    summary.extend(["", "See the announcement report artifact for destinations and delivery IDs."])
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
             stream.write("\n".join(summary) + "\n")
