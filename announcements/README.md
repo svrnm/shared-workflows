@@ -3,7 +3,7 @@
 Reusable workflow for distributing OpenTelemetry news and blog announcements.
 The caller supplies prepared content, chooses services, and maps each service to
 one or more destinations. LinkedIn, Bluesky, and Mastodon are delivered through
-Buffer. Slack is delivered through an incoming webhook. CNCF mailing lists
+Buffer, and Slack through a Slack Workflow Builder webhook. CNCF mailing lists
 (Groups.io) and Reddit use their APIs directly.
 
 ## Modes
@@ -107,7 +107,7 @@ Example `ANNOUNCEMENT_TARGETS` repository variable:
   "linkedin": ["BUFFER_LINKEDIN_CHANNEL_ID"],
   "bluesky": ["BUFFER_BLUESKY_CHANNEL_ID"],
   "mastodon": ["BUFFER_MASTODON_CHANNEL_ID"],
-  "slack": ["C0123456789", "#otel-announcements"],
+  "slack": ["C0123456789", "C9876543210"],
   "groupsio": [12345, 67890],
   "reddit": ["opentelemetry"]
 }
@@ -115,8 +115,8 @@ Example `ANNOUNCEMENT_TARGETS` repository variable:
 
 These IDs are illustrative, not the organization's actual destinations.
 Buffer destinations are connected account/channel IDs, **not** organization IDs;
-use a separate ID for each service. Slack destinations are channel IDs or
-lowercase `#channel-name`s; the webhook URL is a secret, not a target. Groups.io destinations are positive integer group IDs
+use a separate ID for each service. Slack destinations are channel IDs, not
+names; the webhook URL is a secret, not a target. Groups.io destinations are positive integer group IDs
 on the selected host, not email addresses. Reddit destinations are subreddit
 names without `/r/`. There is no implicit destination, even for Reddit: specify
 `opentelemetry` explicitly. Each selected service must have targets. Unselected
@@ -156,8 +156,8 @@ configuration rather than in content files.
 
 Buffer, Slack, and Groups.io receive `text`, a blank line, then the URL.
 Groups.io also uses `title` as the subject and receives escaped HTML, not raw
-HTML from the file. Slack text is sent without markup formatting, and `&`, `<`,
-and `>` are escaped, so content cannot trigger mentions such as `<!channel>`.
+HTML from the file. Slack text escapes `&`, `<`, and `>`, so content cannot
+trigger mentions such as `<!channel>`.
 Reddit receives a **link post** with `title` and `url`; it does not use `text`.
 Provide short social copy, not the entire blog body. The APIs enforce network
 limits; this workflow does not truncate content or create threads automatically.
@@ -168,7 +168,7 @@ Dry runs cannot guarantee that a platform will accept the content.
 | Secret | Required for | Setup |
 | ------ | ------------ | ----- |
 | `BUFFER_API_KEY` | Buffer drafts/publishing | Generate a Buffer API key with access to the connected OpenTelemetry accounts |
-| `SLACK_WEBHOOK_URL` | Slack publishing | A legacy incoming webhook (`https://hooks.slack.com/...`) that accepts a `channel` override, so one URL can reach every target channel. The workflow rejects other hosts. |
+| `SLACK_WEBHOOK_URL` | Slack publishing | A Workflow Builder webhook (`https://hooks.slack.com/triggers/...`); see [Slack setup](#slack-setup). Other URLs are rejected. |
 | `GROUPSIO_API_KEY` | Groups.io drafts/publishing | API key for an account subscribed to the target lists, with `can_post` permission |
 | `REDDIT_CLIENT_ID` | Reddit publishing | Approved Reddit OAuth application |
 | `REDDIT_CLIENT_SECRET` | Reddit publishing | Application client secret |
@@ -181,6 +181,16 @@ The workflow uses `/newdraft`, `/updatedraft`, and, for publishing only,
 immediate email delivery. Review Groups.io drafts in the authenticated account.
 If a draft update fails, the report retains its ID so it can be inspected or
 removed manually.
+
+#### Slack setup
+
+In Slack Workflow Builder, create a workflow that starts **from a webhook**
+and declares two variables: `channel` (type *Slack channel ID*) and `text`
+(type *Text*). Add a **Send a message to a channel** step that uses the
+`channel` variable as its channel and only the `text` variable as the message.
+Publish the workflow and store its webhook URL as `SLACK_WEBHOOK_URL`. No Slack
+app installation is required. Messages appear as posted by the workflow, which
+belongs to the Slack user who created it, so add a second collaborator.
 
 For Reddit, obtain API approval and coordinate with subreddit moderators.
 Access is not guaranteed merely by creating client credentials. Tokens are
@@ -347,7 +357,7 @@ intent. This workflow cannot provide an atomic transaction across services.
 
 - [Buffer draft creation](https://developers.buffer.com/examples/create-draft-post.html)
   and [post input](https://developers.buffer.com/types/CreatePostInput.html)
-- [Slack incoming webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks)
+- [Slack Workflow Builder webhook triggers](https://slack.com/help/articles/360041352714-Build-a-workflow--Create-a-workflow-that-starts-outside-of-Slack)
 - [Groups.io API: drafts](https://groups.io/api#drafts)
 - [Reddit API](https://www.reddit.com/dev/api/#POST_api_submit)
 

@@ -52,7 +52,7 @@ def request(url, payload, headers=None, *, form=False, empty_ok=False, raw=False
     except HTTPError as exc:
         detail = ""
         if raw:
-            # Slack webhooks report errors as short plain-text codes.
+            # Slack webhooks report errors as short codes.
             try:
                 detail = f" ({api_error_code(exc.read().decode().strip())})"
             except (OSError, UnicodeDecodeError, AttributeError):
@@ -146,7 +146,7 @@ def build_plan(announcement, channels, targets, mode):
                 valid = type(destination) is int and destination > 0
             else:
                 pattern = {
-                    "slack": r"[CG][A-Z0-9]+|#[a-z0-9_-]{1,80}",
+                    "slack": r"[CG][A-Z0-9]+",
                     "reddit": r"[A-Za-z0-9_]{2,21}",
                 }.get(channel, r"[A-Za-z0-9_-]+")
                 valid = isinstance(destination, str) and re.fullmatch(pattern, destination)
@@ -219,9 +219,9 @@ class Publisher:
             if not isinstance(value, str) or any(not 33 <= ord(char) <= 126 for char in value):
                 raise DeliveryError(f"{secret} must contain only printable ASCII without whitespace")
         if any(item["channel"] == "slack" for item in active) and not re.fullmatch(
-            r"https://hooks\.slack\.com/[A-Za-z0-9/_-]+", self.credentials["SLACK_WEBHOOK_URL"]
+            r"https://hooks\.slack\.com/triggers/[A-Za-z0-9/_-]+", self.credentials["SLACK_WEBHOOK_URL"]
         ):
-            raise DeliveryError("SLACK_WEBHOOK_URL must be a https://hooks.slack.com/ URL")
+            raise DeliveryError("SLACK_WEBHOOK_URL must be a Slack workflow webhook (https://hooks.slack.com/triggers/...)")
         if any(item["channel"] == "reddit" for item in active):
             text_field(self.reddit_user_agent, "reddit_user_agent", limit=256)
             if any(not 32 <= ord(char) <= 126 for char in self.reddit_user_agent):
@@ -272,17 +272,21 @@ class Publisher:
             if post.get("status") not in allowed:
                 raise DeliveryError("Buffer returned an unexpected post status")
         elif channel == "slack":
+            # Workflow Builder webhooks accept only the trigger's declared variables.
             result = request(
                 self.credentials["SLACK_WEBHOOK_URL"],
-                {"channel": item["target"], "text": slack_escape(item["text"]),
-                 "mrkdwn": False, "parse": "none", "link_names": False, "unfurl_links": True},
+                {"channel": item["target"], "text": slack_escape(item["text"])},
                 raw=True,
-            )
-            # Webhooks return a plain "ok" and no message ID.
-            if result.strip() != "ok":
+            ).strip()
+            try:
+                parsed = json.loads(result)
+            except ValueError:
+                parsed = None
+            if result != "ok" and not (isinstance(parsed, dict) and parsed.get("ok") is True):
+                error = parsed.get("error") if isinstance(parsed, dict) else result
                 raise DeliveryError(
-                    f"Slack rejected the message ({api_error_code(result.strip())}); "
-                    "check that the webhook can post to the channel"
+                    f"Slack rejected the message ({api_error_code(error)}); "
+                    "check the workflow's channel and text variables"
                 )
         elif channel == "groupsio":
             headers = self.auth("GROUPSIO_API_KEY")
