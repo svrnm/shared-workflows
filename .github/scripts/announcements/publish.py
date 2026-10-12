@@ -22,7 +22,7 @@ SECRETS = {
     "linkedin": ("BUFFER_API_KEY",),
     "bluesky": ("BUFFER_API_KEY",),
     "mastodon": ("BUFFER_API_KEY",),
-    "slack": ("SLACK_BOT_TOKEN",),
+    "slack": ("SLACK_WEBHOOK_URL",),
     "groupsio": ("GROUPSIO_API_KEY",),
     "reddit": ("REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_REFRESH_TOKEN"),
 }
@@ -38,7 +38,7 @@ class NoRedirects(HTTPRedirectHandler):
         return None
 
 
-def request(url, payload, headers=None, *, form=False, empty_ok=False):
+def request(url, payload, headers=None, *, form=False, empty_ok=False, raw=False):
     data = urlencode(payload).encode() if form else json.dumps(payload).encode()
     headers = {
         "Content-Type": "application/x-www-form-urlencoded" if form else "application/json",
@@ -50,11 +50,20 @@ def request(url, payload, headers=None, *, form=False, empty_ok=False):
         ) as response:
             body = response.read()
     except HTTPError as exc:
-        raise DeliveryError(f"API returned HTTP {exc.code}; not retried") from exc
+        detail = ""
+        if raw:
+            # Slack webhooks report errors as short plain-text codes.
+            try:
+                detail = f" ({api_error_code(exc.read().decode().strip())})"
+            except (OSError, UnicodeDecodeError, AttributeError):
+                pass
+        raise DeliveryError(f"API returned HTTP {exc.code}{detail}; not retried") from exc
     except (URLError, TimeoutError, OSError, HTTPException) as exc:
         raise DeliveryError(
             "API connection failed; delivery may have occurred; not retried"
         ) from exc
+    if raw:
+        return body.decode("utf-8", errors="replace")
     if not body and empty_ok:
         return None
     try:
@@ -75,6 +84,11 @@ def text_field(value, name, *, limit=40000):
     ):
         raise DeliveryError(f"{name} contains control characters")
     return value
+
+
+def slack_escape(text):
+    # Slack treats <...> as control sequences such as <!channel>, even with parse=none.
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def parse_json(value, name):
@@ -132,7 +146,7 @@ def build_plan(announcement, channels, targets, mode):
                 valid = type(destination) is int and destination > 0
             else:
                 pattern = {
-                    "slack": r"[CG][A-Z0-9]+",
+                    "slack": r"[CG][A-Z0-9]+|#[a-z0-9_-]{1,80}",
                     "reddit": r"[A-Za-z0-9_]{2,21}",
                 }.get(channel, r"[A-Za-z0-9_-]+")
                 valid = isinstance(destination, str) and re.fullmatch(pattern, destination)
@@ -149,7 +163,7 @@ def build_plan(announcement, channels, targets, mode):
         override = overrides.get(channel, {})
         channel_title = override.get("title", title)
         body = f"{override.get('text', text)}\n\n{url}"
-        if channel == "slack" and len(body) > 40000:
+        if channel == "slack" and len(slack_escape(body)) > 40000:
             raise DeliveryError("Slack content exceeds 40000 characters")
         for destination in targets[channel]:
             if channel in BUFFER_CHANNELS:
@@ -204,6 +218,10 @@ class Publisher:
             value = self.credentials[secret]
             if not isinstance(value, str) or any(not 33 <= ord(char) <= 126 for char in value):
                 raise DeliveryError(f"{secret} must contain only printable ASCII without whitespace")
+        if any(item["channel"] == "slack" for item in active) and not re.fullmatch(
+            r"https://hooks\.slack\.com/[A-Za-z0-9/_-]+", self.credentials["SLACK_WEBHOOK_URL"]
+        ):
+            raise DeliveryError("SLACK_WEBHOOK_URL must be a https://hooks.slack.com/ URL")
         if any(item["channel"] == "reddit" for item in active):
             text_field(self.reddit_user_agent, "reddit_user_agent", limit=256)
             if any(not 32 <= ord(char) <= 126 for char in self.reddit_user_agent):
@@ -255,17 +273,17 @@ class Publisher:
                 raise DeliveryError("Buffer returned an unexpected post status")
         elif channel == "slack":
             result = request(
-                "https://slack.com/api/chat.postMessage",
-                {"channel": item["target"], "text": item["text"],
-                 "mrkdwn": False, "parse": "none", "unfurl_links": True},
-                self.auth("SLACK_BOT_TOKEN"),
+                self.credentials["SLACK_WEBHOOK_URL"],
+                {"channel": item["target"], "text": slack_escape(item["text"]),
+                 "mrkdwn": False, "parse": "none", "link_names": False, "unfurl_links": True},
+                raw=True,
             )
-            if result.get("ok") is not True or not result.get("ts"):
+            # Webhooks return a plain "ok" and no message ID.
+            if result.strip() != "ok":
                 raise DeliveryError(
-                    f"Slack rejected the message ({api_error_code(result.get('error'))}); "
-                    "check bot membership and chat:write scope"
+                    f"Slack rejected the message ({api_error_code(result.strip())}); "
+                    "check that the webhook can post to the channel"
                 )
-            item["remote_id"] = result["ts"]
         elif channel == "groupsio":
             headers = self.auth("GROUPSIO_API_KEY")
             draft = request(

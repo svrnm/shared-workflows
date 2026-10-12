@@ -21,7 +21,11 @@ TARGETS = {
     "mastodon": ["mastodon-id"], "slack": ["C123", "C456"],
     "groupsio": [123, 456], "reddit": ["opentelemetry"],
 }
-CREDS = {secret: "test-value" for secrets in publish.SECRETS.values() for secret in secrets}
+WEBHOOK = "https://hooks.slack.com/services/T000/B000/test"
+CREDS = {
+    **{secret: "test-value" for secrets in publish.SECRETS.values() for secret in secrets},
+    "SLACK_WEBHOOK_URL": WEBHOOK,
+}
 
 
 def plan(channels=None, mode="publish", announcement=None, targets=None):
@@ -69,7 +73,8 @@ class PlanTests(unittest.TestCase):
             {"channels": ["slack"], "targets": {}},
             {"channels": ["groupsio"], "targets": {"groupsio": [True]}},
             {"channels": ["groupsio"], "targets": {"groupsio": ["123"]}},
-            {"channels": ["slack"], "targets": {"slack": ["#general"]}},
+            {"channels": ["slack"], "targets": {"slack": ["general"]}},
+            {"channels": ["slack"], "targets": {"slack": ["#General"]}},
             {"channels": ["slack"], "targets": {"slack": ["C123", "C123"]}},
             {"channels": ["reddit"], "targets": {"reddit": ["opentelemetry", "OpenTelemetry"]}},
             {"channels": ["linkedin", "bluesky"], "targets": {"linkedin": ["same"], "bluesky": ["same"]}},
@@ -128,15 +133,15 @@ class PlanTests(unittest.TestCase):
 
     @patch("publish.request")
     def test_missing_secret_prevents_all_requests(self, request):
-        with self.assertRaisesRegex(publish.DeliveryError, "SLACK_BOT_TOKEN"):
+        with self.assertRaisesRegex(publish.DeliveryError, "SLACK_WEBHOOK_URL"):
             publisher({"BUFFER_API_KEY": "test"}).run(plan(["linkedin", "slack"]))
         request.assert_not_called()
 
     @patch("publish.request")
     def test_invalid_header_credentials_fail_without_exposing_them(self, request):
         with self.assertRaises(publish.DeliveryError) as failure:
-            publisher({**CREDS, "SLACK_BOT_TOKEN": "sensitive\nvalue"}).run(plan(["slack"]))
-        self.assertIn("SLACK_BOT_TOKEN", str(failure.exception))
+            publisher({**CREDS, "SLACK_WEBHOOK_URL": "sensitive\nvalue"}).run(plan(["slack"]))
+        self.assertIn("SLACK_WEBHOOK_URL", str(failure.exception))
         self.assertNotIn("sensitive", str(failure.exception))
         request.assert_not_called()
 
@@ -145,6 +150,15 @@ class PlanTests(unittest.TestCase):
         instance = publish.Publisher(CREDS, reddit_user_agent="non-ascii \U0001f680")
         with self.assertRaises(publish.DeliveryError):
             instance.run(plan(["slack", "reddit"]))
+        request.assert_not_called()
+
+    @patch("publish.request")
+    def test_slack_webhook_must_be_a_slack_url(self, request):
+        for url in ["https://example.com/hook", "http://hooks.slack.com/services/x",
+                    "https://hooks.slack.com.example.com/x"]:
+            with self.subTest(url=url), self.assertRaises(publish.DeliveryError) as failure:
+                publisher({**CREDS, "SLACK_WEBHOOK_URL": url}).run(plan(["slack"]))
+            self.assertNotIn(url, str(failure.exception))
         request.assert_not_called()
 
     def test_groupsio_host_is_allowlisted(self):
@@ -210,16 +224,23 @@ class DeliveryTests(unittest.TestCase):
 
     @patch("publish.request")
     def test_slack_posts_to_each_selected_channel(self, request):
-        request.side_effect = [{"ok": True, "ts": "1.1"}, {"ok": True, "ts": "1.2"}]
-        items = plan(["slack"])
+        request.side_effect = ["ok", "ok"]
+        items = plan(["slack"], targets={"slack": ["C123", "#announcements-test"]},
+                     announcement={**ANNOUNCEMENT, "text": "Hi <!channel> & <@U123>"})
         self.assertTrue(publisher().run(items))
-        self.assertEqual([call.args[1]["channel"] for call in request.call_args_list], ["C123", "C456"])
-        self.assertFalse(request.call_args.args[1]["mrkdwn"])
-        self.assertEqual(request.call_args.args[1]["parse"], "none")
+        self.assertEqual([call.args[0] for call in request.call_args_list], [WEBHOOK, WEBHOOK])
+        self.assertEqual([call.args[1]["channel"] for call in request.call_args_list],
+                         ["C123", "#announcements-test"])
+        self.assertTrue(request.call_args.kwargs["raw"])
+        payload = request.call_args.args[1]
+        self.assertFalse(payload["mrkdwn"])
+        self.assertEqual(payload["parse"], "none")
+        self.assertTrue(payload["text"].startswith("Hi &lt;!channel&gt; &amp; &lt;@U123&gt;"))
+        self.assertNotIn("remote_id", items[0])
 
     @patch("publish.request")
     def test_partial_failure_is_reported_and_not_retried(self, request):
-        request.side_effect = [{"ok": False, "error": "channel_not_found"}, {"ok": True, "ts": "1.2"}]
+        request.side_effect = ["channel_not_found", "ok"]
         items = plan(["slack"])
         progress = MagicMock()
         self.assertFalse(publisher().run(items, progress))
@@ -298,6 +319,18 @@ class TransportTests(unittest.TestCase):
         publish.request("https://example.com", {"text": "a & b"}, form=True)
         req = opener.return_value.open.call_args.args[0]
         self.assertEqual(parse_qs(req.data.decode()), {"text": ["a & b"]})
+
+    @patch("publish.build_opener")
+    def test_raw_response_and_webhook_error_codes(self, opener):
+        response = opener.return_value.open.return_value.__enter__.return_value
+        response.read.return_value = b"ok"
+        self.assertEqual(publish.request(WEBHOOK, {}, raw=True), "ok")
+        error = HTTPError(WEBHOOK, 404, "Not Found", {}, None)
+        error.read = MagicMock(return_value=b"channel_not_found")
+        opener.return_value.open.side_effect = error
+        with self.assertRaisesRegex(publish.DeliveryError, r"HTTP 404 \(channel_not_found\)") as failure:
+            publish.request(WEBHOOK, {}, raw=True)
+        self.assertNotIn(WEBHOOK, str(failure.exception))
 
     @patch("publish.build_opener")
     def test_empty_response_only_allowed_explicitly(self, opener):

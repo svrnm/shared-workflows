@@ -3,7 +3,8 @@
 Reusable workflow for distributing OpenTelemetry news and blog announcements.
 The caller supplies prepared content, chooses services, and maps each service to
 one or more destinations. LinkedIn, Bluesky, and Mastodon are delivered through
-Buffer; Slack, CNCF mailing lists (Groups.io), and Reddit use their APIs directly.
+Buffer. Slack is delivered through an incoming webhook. CNCF mailing lists
+(Groups.io) and Reddit use their APIs directly.
 
 ## Modes
 
@@ -50,7 +51,7 @@ jobs:
       reddit_user_agent: "github-actions:otel-announcements:1.0 (by /u/YOUR_BOT)"
     secrets:
       BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       GROUPSIO_API_KEY: ${{ secrets.GROUPSIO_API_KEY }}
       REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
       REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
@@ -106,7 +107,7 @@ Example `ANNOUNCEMENT_TARGETS` repository variable:
   "linkedin": ["BUFFER_LINKEDIN_CHANNEL_ID"],
   "bluesky": ["BUFFER_BLUESKY_CHANNEL_ID"],
   "mastodon": ["BUFFER_MASTODON_CHANNEL_ID"],
-  "slack": ["C0123456789", "C9876543210"],
+  "slack": ["C0123456789", "#otel-announcements"],
   "groupsio": [12345, 67890],
   "reddit": ["opentelemetry"]
 }
@@ -114,8 +115,8 @@ Example `ANNOUNCEMENT_TARGETS` repository variable:
 
 These IDs are illustrative, not the organization's actual destinations.
 Buffer destinations are connected account/channel IDs, **not** organization IDs;
-use a separate ID for each service. Slack destinations are channel IDs, not
-names or webhook URLs. Groups.io destinations are positive integer group IDs
+use a separate ID for each service. Slack destinations are channel IDs or
+lowercase `#channel-name`s; the webhook URL is a secret, not a target. Groups.io destinations are positive integer group IDs
 on the selected host, not email addresses. Reddit destinations are subreddit
 names without `/r/`. There is no implicit destination, even for Reddit: specify
 `opentelemetry` explicitly. Each selected service must have targets. Unselected
@@ -155,7 +156,8 @@ configuration rather than in content files.
 
 Buffer, Slack, and Groups.io receive `text`, a blank line, then the URL.
 Groups.io also uses `title` as the subject and receives escaped HTML, not raw
-HTML from the file. Slack text is sent without markup/mention parsing.
+HTML from the file. Slack text is sent without markup formatting, and `&`, `<`,
+and `>` are escaped, so content cannot trigger mentions such as `<!channel>`.
 Reddit receives a **link post** with `title` and `url`; it does not use `text`.
 Provide short social copy, not the entire blog body. The APIs enforce network
 limits; this workflow does not truncate content or create threads automatically.
@@ -166,7 +168,7 @@ Dry runs cannot guarantee that a platform will accept the content.
 | Secret | Required for | Setup |
 | ------ | ------------ | ----- |
 | `BUFFER_API_KEY` | Buffer drafts/publishing | Generate a Buffer API key with access to the connected OpenTelemetry accounts |
-| `SLACK_BOT_TOKEN` | Slack publishing | Install a bot with `chat:write` and invite it to each destination channel, including private channels |
+| `SLACK_WEBHOOK_URL` | Slack publishing | A legacy incoming webhook (`https://hooks.slack.com/...`) that accepts a `channel` override, so one URL can reach every target channel. The workflow rejects other hosts. |
 | `GROUPSIO_API_KEY` | Groups.io drafts/publishing | API key for an account subscribed to the target lists, with `can_post` permission |
 | `REDDIT_CLIENT_ID` | Reddit publishing | Approved Reddit OAuth application |
 | `REDDIT_CLIENT_SECRET` | Reddit publishing | Application client secret |
@@ -297,7 +299,7 @@ jobs:
       reddit_user_agent: "github-actions:otel-announcements:1.0 (by /u/YOUR_BOT)"
     secrets:
       BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       GROUPSIO_API_KEY: ${{ secrets.GROUPSIO_API_KEY }}
       REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
       REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
@@ -330,6 +332,8 @@ Missing credentials or failed preflight checks prevent all delivery writes.
 `submitted` means the service accepted the request, **not** confirmed end-to-end
 publication. Buffer may complete publishing asynchronously or report a later
 error; list moderation and Reddit moderation may delay or remove a submission.
+Slack webhooks return no message ID, so Slack entries have no remote ID; check
+the channel itself before retrying.
 
 There are **no automatic write retries and no persistent deduplication**.
 Timeouts/connection errors can occur after a service accepted a write. Inspect
@@ -343,7 +347,7 @@ intent. This workflow cannot provide an atomic transaction across services.
 
 - [Buffer draft creation](https://developers.buffer.com/examples/create-draft-post.html)
   and [post input](https://developers.buffer.com/types/CreatePostInput.html)
-- [Slack chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage)
+- [Slack incoming webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks)
 - [Groups.io API: drafts](https://groups.io/api#drafts)
 - [Reddit API](https://www.reddit.com/dev/api/#POST_api_submit)
 

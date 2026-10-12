@@ -39,7 +39,7 @@ on:
     secrets:
       BUFFER_API_KEY:
         required: false
-      SLACK_BOT_TOKEN:
+      SLACK_WEBHOOK_URL:
         required: false
       GROUPSIO_API_KEY:
         required: false
@@ -70,7 +70,7 @@ jobs:
           report-directory: ${{ runner.temp }}/announcements
         env:
           BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           GROUPSIO_API_KEY: ${{ secrets.GROUPSIO_API_KEY }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
